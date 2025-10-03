@@ -7,7 +7,7 @@ Interactive interface with draggable boxes and corner handles
 import json
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 import pdfplumber
 
 # Pre-populated bounding boxes based on STR form analysis
@@ -439,12 +439,21 @@ class TemplateBuilder:
             )
             self.pdf_counter_label.pack(pady=5)
 
-        # Box list
-        list_label = ttk.Label(control_frame, text="Bounding Boxes:", font=("Arial", 10, "bold"))
-        list_label.pack(pady=(10, 5))
+        # Box list with collapsible header
+        self.box_list_expanded = True
+
+        list_header_btn = ttk.Button(
+            control_frame,
+            text="▼ Bounding Boxes",
+            command=self.toggle_box_list,
+            style="Header.TButton"
+        )
+        list_header_btn.pack(pady=(10, 5), fill=tk.X)
+        self.list_header_btn = list_header_btn
 
         list_frame = ttk.Frame(control_frame)
         list_frame.pack(fill=tk.BOTH, expand=True)
+        self.list_frame = list_frame
 
         self.box_listbox = tk.Listbox(list_frame, height=20)
         list_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.box_listbox.yview)
@@ -492,6 +501,17 @@ class TemplateBuilder:
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
         self.canvas.bind("<Button-3>", self.on_right_click)  # Right-click delete
+
+    def toggle_box_list(self):
+        """Toggle visibility of bounding box list"""
+        self.box_list_expanded = not self.box_list_expanded
+
+        if self.box_list_expanded:
+            self.list_frame.pack(fill=tk.BOTH, expand=True)
+            self.list_header_btn.config(text="▼ Bounding Boxes")
+        else:
+            self.list_frame.pack_forget()
+            self.list_header_btn.config(text="▶ Bounding Boxes")
 
     def create_boxes(self):
         """Create bounding boxes from initial data"""
@@ -714,6 +734,14 @@ class TemplateBuilder:
                 extracted_data['pasangan'] = pasangan_fields
                 extracted_data['waris'] = waris_fields
 
+                # Show visualization with extraction boxes
+                offsets = {
+                    'pemohon': pemohon_offset,
+                    'pasangan': pasangan_offset,
+                    'waris': waris_offset
+                }
+                self.show_extraction_visualization(page, fields, offsets)
+
             # Clean up temp file
             Path(temp_json).unlink(missing_ok=True)
 
@@ -734,6 +762,85 @@ class TemplateBuilder:
             self.results_text.insert("1.0", error_msg)
             self.results_text.config(state=tk.DISABLED)
             print(f"✗ Extraction test failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def show_extraction_visualization(self, page, fields, offsets):
+        """Show annotated PDF with extraction bounding boxes in a new window"""
+        try:
+            # Convert PDF page to PIL Image
+            pil_image = page.to_image(resolution=150).original
+            draw = ImageDraw.Draw(pil_image)
+
+            # Try to use a system font, fall back to default if not available
+            try:
+                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 10)
+            except:
+                font = ImageFont.load_default()
+
+            # Draw bounding boxes for each field
+            pemohon_offset = offsets['pemohon']
+            pasangan_offset = offsets['pasangan']
+            waris_offset = offsets['waris']
+
+            for field_name, box in fields.items():
+                # Skip header fields
+                if field_name.endswith('_header'):
+                    continue
+
+                # Determine section-specific offset
+                if field_name.startswith('waris_'):
+                    y_offset = waris_offset
+                elif field_name.startswith('pasangan_'):
+                    y_offset = pasangan_offset
+                else:
+                    y_offset = pemohon_offset
+
+                # Calculate adjusted coordinates (PDF coordinates to image coordinates)
+                # pdfplumber's to_image uses resolution scaling
+                scale = 150 / 72  # 150 DPI / 72 points per inch
+                x0 = box['x'] * scale
+                y0 = (box['y'] + y_offset) * scale
+                x1 = (box['x'] + box['width']) * scale
+                y1 = (box['y'] + box['height'] + y_offset) * scale
+
+                # Draw blue rectangle
+                draw.rectangle([x0, y0, x1, y1], outline='blue', width=2)
+
+                # Draw field name label
+                label = field_name.replace('_', ' ')
+                draw.text((x0, y0 - 12), label, fill='blue', font=font)
+
+            # Create new toplevel window
+            viz_window = tk.Toplevel(self.root)
+            viz_window.title("Extraction Visualization")
+
+            # Convert PIL image to PhotoImage
+            photo = ImageTk.PhotoImage(pil_image)
+
+            # Create canvas with scrollbars
+            frame = ttk.Frame(viz_window)
+            frame.pack(fill=tk.BOTH, expand=True)
+
+            canvas = tk.Canvas(frame, width=min(800, pil_image.width), height=min(1000, pil_image.height))
+            v_scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+            h_scrollbar = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=canvas.xview)
+
+            canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+
+            v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            # Display image on canvas
+            canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+            canvas.config(scrollregion=canvas.bbox(tk.ALL))
+
+            # Keep reference to prevent garbage collection
+            viz_window.photo = photo
+
+        except Exception as e:
+            messagebox.showerror("Visualization Error", f"Failed to create visualization:\n{str(e)}")
             import traceback
             traceback.print_exc()
 

@@ -163,6 +163,8 @@ class STRExtractor:
                 text = text.strip()
                 # Replace multiple spaces with single space
                 text = ' '.join(text.split())
+                # Remove trailing punctuation (colons, semicolons, etc.)
+                text = text.rstrip(':;,.')
                 return text
 
             return ""
