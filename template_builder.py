@@ -687,8 +687,31 @@ class TemplateBuilder:
             with pdfplumber.open(self.pdf_path) as pdf:
                 page = pdf.pages[0]
 
-                # Detect section offsets using header anchors
-                print("\n  === Detecting Section Offsets ===")
+                # STAGE 1: Auto-detect template based on status_perkahwinan
+                print("\n  === STAGE 1: Auto-detecting template ===")
+                status_perkahwinan = ""
+                if 'status_perkahwinan' in fields:
+                    status_box = fields['status_perkahwinan']
+                    status_perkahwinan = extractor.extract_text_from_box(page, status_box).upper()
+                    print(f"  Status Perkahwinan: {status_perkahwinan}")
+
+                # Determine which template to use
+                if 'KAHWIN' in status_perkahwinan:
+                    template_to_use = "template_with_pasangan.json"
+                    print(f"  → Auto-selected: WITH PASANGAN template")
+                else:
+                    template_to_use = "template_without_pasangan.json"
+                    print(f"  → Auto-selected: WITHOUT PASANGAN template")
+
+                # Reload with correct template if different
+                if template_to_use != Path(temp_json).name:
+                    print(f"  Reloading fields from: {template_to_use}")
+                    extractor.load_template(template_to_use)
+                    # Update fields dict with the new template
+                    fields = extractor.fields.copy()
+
+                # STAGE 2: Detect section offsets using header anchors
+                print("\n  === STAGE 2: Detecting Section Offsets ===")
                 pemohon_offset = extractor.detect_section_offset(page, 'maklumat_pemohon_header')
                 pasangan_offset = extractor.detect_section_offset(page, 'maklumat_pasangan_header')
                 anak_offset = extractor.detect_section_offset(page, 'maklumat_anak_header')
