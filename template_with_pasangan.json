@@ -4,6 +4,12 @@
     "height": 792.0
   },
   "fields": {
+    "maklumat_pemohon_header": {
+      "x": 15,
+      "y": 65,
+      "width": 510,
+      "height": 16
+    },
     "nama": {
       "x": 47,
       "y": 86,

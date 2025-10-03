@@ -25,25 +25,148 @@ class STRExtractor:
         self.pdf_dimensions = template.get('pdf_dimensions', {})
         print(f"Loaded template with {len(self.fields)} fields from {template_path}")
 
-    def extract_text_from_box(self, page, box):
-        """Extract text from a bounding box region"""
-        x, y, w, h = box['x'], box['y'], box['width'], box['height']
+    def detect_section_offset(self, page, header_field_name):
+        """Detect Y-offset for a section by finding its header position
 
-        # Crop the page to the bounding box
-        # pdfplumber uses (x0, top, x1, bottom) format
-        bbox = (x, y, x + w, y + h)
+        Args:
+            page: pdfplumber page object
+            header_field_name: name of the header field (e.g., 'maklumat_waris_header')
+
+        Returns:
+            Y-offset in pixels (positive = shifted down, negative = shifted up)
+        """
+        if header_field_name not in self.fields:
+            return 0
+
+        template_box = self.fields[header_field_name]
+        template_y = template_box['y']
+        template_x = template_box['x']
+        template_w = template_box['width']
+
+        # Expected header text keywords
+        header_keywords = {
+            'maklumat_pemohon_header': ['MAKLUMAT', 'PEMOHON'],
+            'maklumat_pasangan_header': ['MAKLUMAT', 'PASANGAN'],
+            'maklumat_anak_header': ['MAKLUMAT', 'ANAK'],
+            'maklumat_waris_header': ['MAKLUMAT', 'WARIS']
+        }
+
+        keywords = header_keywords.get(header_field_name, ['MAKLUMAT'])
+
+        # Use larger search range for waris section (variable position due to anak section)
+        search_range = 200 if header_field_name == 'maklumat_waris_header' else 50
 
         try:
-            cropped = page.within_bbox(bbox)
-            text = cropped.extract_text()
+            # Get all words in the page
+            words = page.extract_words()
 
-            if text:
+            # For waris header, need to find both MAKLUMAT and WARIS nearby
+            if header_field_name == 'maklumat_waris_header':
+                # Find all MAKLUMAT words first
+                maklumat_words = []
+                waris_words = []
+
+                print(f"  DEBUG: Searching for waris header with:")
+                print(f"         X range: [{template_x - 20}, {template_x + template_w + 20}]")
+                print(f"         Y range: [{template_y - search_range}, {template_y + search_range}]")
+
+                for word in words:
+                    word_text = word['text'].upper()
+                    word_x = word['x0']
+                    word_y = word['top']
+
+                    # Look for keywords in expected X range and expanded Y range
+                    if template_x - 20 <= word_x <= template_x + template_w + 20:
+                        if abs(word_y - template_y) <= search_range:
+                            if 'MAKLUMAT' in word_text:
+                                maklumat_words.append((word_y, word_x, word_text))
+                                print(f"         Found MAKLUMAT at X={word_x:.1f}, Y={word_y:.1f}")
+                            elif 'WARIS' in word_text:
+                                waris_words.append((word_y, word_x, word_text))
+                                print(f"         Found WARIS at X={word_x:.1f}, Y={word_y:.1f}")
+
+                # Find MAKLUMAT and WARIS that are on the same line (within 5px vertically)
+                for mak_y, mak_x, mak_text in maklumat_words:
+                    for war_y, war_x, war_text in waris_words:
+                        if abs(mak_y - war_y) <= 5:  # Same line
+                            actual_y = mak_y
+                            offset = int(actual_y - template_y)
+                            print(f"  📍 {header_field_name}: Found at Y={actual_y:.1f} (template Y={template_y}), offset={offset:+d}px")
+                            return offset
+
+                # If not found, print debug info
+                print(f"  ⚠️  {header_field_name}: Could not find both MAKLUMAT and WARIS nearby")
+                print(f"      Found {len(maklumat_words)} MAKLUMAT words, {len(waris_words)} WARIS words in search range")
+                return 0
+
+            # For other headers, use original logic
+            candidates = []
+            for word in words:
+                word_text = word['text'].upper()
+                word_x = word['x0']
+                word_y = word['top']
+
+                # Check if word matches any keyword and is in correct X range
+                if (any(kw in word_text for kw in keywords) and
+                    template_x - 20 <= word_x <= template_x + template_w + 20 and
+                    abs(word_y - template_y) <= search_range):
+                    candidates.append((word_y, word_text))
+
+            if candidates:
+                # Use the first matching candidate (should be the header)
+                actual_y = candidates[0][0]
+                offset = int(actual_y - template_y)
+                if offset != 0:
+                    print(f"  📍 {header_field_name}: Y offset {offset:+d}px detected")
+                return offset
+
+        except Exception as e:
+            print(f"  Warning: Error detecting offset for {header_field_name}: {e}")
+
+        return 0  # No offset if header not found
+
+    def extract_text_from_box(self, page, box, y_offset=0, tolerance=5):
+        """Extract text using word filtering with section-based Y-offset and tolerance
+
+        Args:
+            page: pdfplumber page object
+            box: dictionary with 'x', 'y', 'width', 'height' keys
+            y_offset: Section-specific Y-offset in pixels
+            tolerance: Y-axis tolerance in pixels (default: 5px for tight matching)
+
+        Returns:
+            Extracted text string
+        """
+        x, y, w, h = box['x'], box['y'], box['width'], box['height']
+
+        # Apply section offset to Y coordinate
+        y_adjusted = y + y_offset
+
+        try:
+            # Get all words on page with their coordinates
+            words = page.extract_words()
+
+            # Filter words within bounding box with Y-tolerance
+            # Using tight tolerance since we already applied section offset
+            field_words = [
+                word for word in words
+                if (x <= word['x0'] <= x + w) and
+                   (y_adjusted - tolerance <= word['top'] <= y_adjusted + h + tolerance)
+            ]
+
+            if field_words:
+                # Sort by position (top to bottom, left to right)
+                field_words.sort(key=lambda w: (w['top'], w['x0']))
+                # Join words preserving order
+                text = ' '.join([w['text'] for w in field_words])
                 # Clean up the text
                 text = text.strip()
                 # Replace multiple spaces with single space
                 text = ' '.join(text.split())
                 return text
+
             return ""
+
         except Exception as e:
             print(f"  Warning: Error extracting from box {box}: {e}")
             return ""
@@ -302,7 +425,14 @@ class STRExtractor:
                         print(f"  ⚠ Warning: PDF dimensions don't match template")
                         print(f"    Expected: {expected_w}x{expected_h}, Got: {page.width}x{page.height}")
 
-            # Extract all fields from bounding boxes
+            # Detect section offsets using header anchors
+            print("\n  === Detecting Section Offsets ===")
+            pemohon_offset = self.detect_section_offset(page, 'maklumat_pemohon_header')
+            pasangan_offset = self.detect_section_offset(page, 'maklumat_pasangan_header')
+            anak_offset = self.detect_section_offset(page, 'maklumat_anak_header')
+            waris_offset = self.detect_section_offset(page, 'maklumat_waris_header')
+
+            # Extract all fields from bounding boxes with section-specific offsets
             print("\n  === STAGE 2: Extracting all fields ===")
             all_fields = {}
             pasangan_fields = {}
@@ -313,7 +443,19 @@ class STRExtractor:
                 if field_name.endswith('_header'):
                     continue
 
-                text = self.extract_text_from_box(page, box)
+                # Determine section-specific offset
+                if field_name.startswith('waris_'):
+                    offset = waris_offset
+                elif field_name.startswith('pasangan_'):
+                    offset = pasangan_offset
+                elif field_name.startswith('anak_'):
+                    offset = anak_offset
+                else:
+                    # Main applicant section (MAKLUMAT PEMOHON)
+                    offset = pemohon_offset
+
+                # Extract with section offset and tight tolerance
+                text = self.extract_text_from_box(page, box, y_offset=offset, tolerance=5)
 
                 # Group fields by prefix
                 if field_name.startswith('pasangan_'):

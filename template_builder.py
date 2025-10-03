@@ -667,7 +667,15 @@ class TemplateBuilder:
             with pdfplumber.open(self.pdf_path) as pdf:
                 page = pdf.pages[0]
 
-                # Extract all fields from bounding boxes
+                # Detect section offsets using header anchors
+                print("\n  === Detecting Section Offsets ===")
+                pemohon_offset = extractor.detect_section_offset(page, 'maklumat_pemohon_header')
+                pasangan_offset = extractor.detect_section_offset(page, 'maklumat_pasangan_header')
+                anak_offset = extractor.detect_section_offset(page, 'maklumat_anak_header')
+                waris_offset = extractor.detect_section_offset(page, 'maklumat_waris_header')
+
+                # Extract all fields from bounding boxes with section-specific offsets
+                print("\n  === Extracting Fields ===")
                 extracted_data = {}
                 pasangan_fields = {}
                 waris_fields = {}
@@ -677,7 +685,16 @@ class TemplateBuilder:
                     if field_name.endswith('_header'):
                         continue
 
-                    text = extractor.extract_text_from_box(page, box)
+                    # Determine section-specific offset
+                    if field_name.startswith('waris_'):
+                        offset = waris_offset
+                    elif field_name.startswith('pasangan_'):
+                        offset = pasangan_offset
+                    else:
+                        offset = pemohon_offset
+
+                    # Extract with section offset
+                    text = extractor.extract_text_from_box(page, box, y_offset=offset, tolerance=5)
 
                     # Group fields by prefix
                     if field_name.startswith('pasangan_'):
@@ -689,7 +706,7 @@ class TemplateBuilder:
                     else:
                         extracted_data[field_name] = text
 
-                # Extract MAKLUMAT ANAK table
+                # Extract MAKLUMAT ANAK table (table detection is position-independent)
                 children = extractor.extract_anak_table(page)
                 extracted_data['anak'] = children
 
