@@ -132,7 +132,7 @@ class STRExtractor:
             page: pdfplumber page object
             box: dictionary with 'x', 'y', 'width', 'height' keys
             y_offset: Section-specific Y-offset in pixels
-            tolerance: Y-axis tolerance in pixels (default: 5px for tight matching)
+            tolerance: Y-axis tolerance in pixels (default: 5px, can be reduced for specific fields)
 
         Returns:
             Extracted text string
@@ -456,8 +456,11 @@ class STRExtractor:
                     # Main applicant section (MAKLUMAT PEMOHON)
                     offset = pemohon_offset
 
-                # Extract with section offset and tight tolerance
-                text = self.extract_text_from_box(page, box, y_offset=offset, tolerance=5)
+                # Determine field-specific tolerance (jantina needs tighter tolerance)
+                tolerance = 3 if field_name == 'jantina' else 5
+
+                # Extract with section offset and field-specific tolerance
+                text = self.extract_text_from_box(page, box, y_offset=offset, tolerance=tolerance)
 
                 # Group fields by prefix
                 if field_name.startswith('pasangan_'):

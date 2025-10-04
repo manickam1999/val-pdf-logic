@@ -736,8 +736,11 @@ class TemplateBuilder:
                     else:
                         offset = pemohon_offset
 
-                    # Extract with section offset
-                    text = extractor.extract_text_from_box(page, box, y_offset=offset, tolerance=5)
+                    # Determine field-specific tolerance (jantina needs tighter tolerance)
+                    tolerance = 3 if field_name == 'jantina' else 5
+
+                    # Extract with section offset and field-specific tolerance
+                    text = extractor.extract_text_from_box(page, box, y_offset=offset, tolerance=tolerance)
 
                     # Group fields by prefix
                     if field_name.startswith('pasangan_'):
